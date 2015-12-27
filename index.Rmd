@@ -1,0 +1,126 @@
+---
+title: "Practical Machine Learning"
+output: html_document
+---
+#Introduction
+The datasets used in this project are from 
+http://groupware.les.inf.puc-rio.br/har website.
+This data contains the measurement of excercise activity  of the participants.
+Different measurements from Arm,Forearm,Belt and Dumbell sensors were used to 
+record this. The goal of this project is to take the data given in the training
+dataset , build a model to predict the classe variable and use it to finally 
+predict classe variable in the testing dataset. 
+training dataset - 
+ https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+testing dataset -
+ https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+Outcome variable classe tells whether the participant correctly performed the 
+excercise as specified (Classification A) or 
+did somethings wrong (Classifications B,C,D,E)
+```{r,echo=FALSE, message=FALSE,warning=FALSE}
+library(caret)
+library(doMC)
+library(randomForest)
+library(RANN)
+```
+#Data Processing 
+Downloading the training and testing files and loading data
+```{r}
+download.file(
+        "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+        destfile = "WtLiftingExcerciseTraining.csv", method = "curl")
+download.file(
+        "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+        destfile = "WtLiftingExcerciseTesting.csv", method = "curl")
+
+actualTrainingData <- read.csv("WtLiftingExcerciseTraining.csv",header = TRUE,
+                               sep=",",na.strings=c("NA","","#DIV/0!"),
+                               stringsAsFactors = FALSE)
+
+testing <-read.csv("WtLiftingExcerciseTesting.csv",,header = TRUE,sep=",",
+                   na.strings=c("NA","","#DIV/0!"),stringsAsFactors = FALSE)
+```
+```{r}
+dim(actualTrainingData)
+dim(testing)
+str(actualTrainingData)
+```
+Selecting interested columns and ignoring the statiscal computed variables 
+such as avg , var , stddev etc
+```{r}
+trainingInterestedCols <- actualTrainingData[, -grep('(X|raw_timestamp_part_1|raw_timestamp_part_2|cvtd_timestamp|^avg|^var|^stddev|^min|^max|^amplitude|^kurtosis|^skewness)', colnames(actualTrainingData))]
+```
+Converting all interested Character variables to factor variables before training the model
+```{r}
+trainingInterestedCols$user_name <- as.factor(trainingInterestedCols$user_name)
+testing$user_name <- as.factor(testing$user_name)
+trainingInterestedCols$classe <- as.factor(trainingInterestedCols$classe)
+```
+using Caret Package , Splitting  the training data into  training and 
+validation datasets.  A 70/30 split is used for this.
+Validation dataset is set aside to check the model accuracy and estimate
+out of sample error etc.
+```{r}
+inTrain <- createDataPartition(y=trainingInterestedCols$classe,p=0.7,list = FALSE)
+training <- trainingInterestedCols[inTrain,]
+validation <- trainingInterestedCols[-inTrain,]
+```
+removing columns that has all NA values 
+```{r}
+trainingNonNA <- training[ , !apply( training , 2 , function(x) all(is.na(x)) )]
+```
+removing non zero var variables (i.e here new_window)
+```{r}
+training <- trainingNonNA[, -nearZeroVar(trainingNonNA)]
+```
+#Modeling
+Trained the model using the Caret package
+and also utilized the parallel processing capabilities of doMC package
+To find the optimal model and for cross validatiion,used cv method with 5 folds.
+```{r}
+registerDoMC(cores = 24)
+modelFit <- train(classe ~ ., 
+                          data = training, 
+                          method = "rf",
+                          trControl = trainControl(method = "cv", 
+                                                   number = 5)) 
+modelFit
+summary(modelFit)
+plot(modelFit)
+```
+An optimal model with mtry = 30 and best accuracy 99.69% is chosen.
+
+#Prediction and Analysis
+Applying the model to validation dataset to check accuracy or fine tune model
+if necessary.
+```{r}
+validationPred <- predict(modelFit,validation)
+cm<-confusionMatrix(validationPred,validation$classe)
+cm
+```
+
+`r modelAccuracy <- cm$overall['Accuracy']`
+Based on this we can see that Accuracy is `r modelAccuracy`
+(>99%) and
+we expect the out of sample error to be 1 - Accuracy = `r 1-modelAccuracy`
+
+
+Finally applied the model to testing dataset to predict the classe variable.
+```{r}
+testingPred <- predict(modelFit,testing)
+testingPred
+```
+
+Writing the final prediction results to output files
+```{r}
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(testingPred)
+```
+
+
